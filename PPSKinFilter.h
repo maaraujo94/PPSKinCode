@@ -24,11 +24,13 @@ private:
   edm::InputTag forwardProtonInputTag_;  // Input tag identifying the forward proton collection
   edm::EDGetTokenT<std::vector<reco::ForwardProton>> recoProtonSingleRPToken_;
 
+  std::string lhcInfoLabel_;
+  
   double maxDiffxi_;
   double maxDiffm_;
   double maxDiffy_;
   
-  int n_jets_;
+  unsigned int n_jets_;
 
   bool do_xi_;
   bool do_my_;

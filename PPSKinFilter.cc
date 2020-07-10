@@ -3,9 +3,13 @@
 
 #include "FWCore/ParameterSet/interface/ConfigurationDescriptions.h"
 #include "FWCore/Framework/interface/Event.h"
+#include "FWCore/Framework/interface/EventSetup.h"
 
 #include "DataFormats/CTPPSDetId/interface/CTPPSDetId.h"
 #include "DataFormats/CTPPSReco/interface/CTPPSLocalTrackLite.h"
+
+#include "CondFormats/RunInfo/interface/LHCInfo.h"
+#include "CondFormats/DataRecord/interface/LHCInfoRcd.h"
 
 #include "FWCore/Framework/interface/MakerMacros.h"
 
@@ -19,11 +23,13 @@ void PPSKinFilter::fillDescriptions(edm::ConfigurationDescriptions& descriptions
   desc.add<edm::InputTag>("forwardProtonInputTag", edm::InputTag("ctppsProtons", "singleRP"))
     ->setComment("input tag of the forward proton collection");
 
+  desc.add<std::string>("lhcInfoLabel", std::string(""))->setComment("label used for LHCInfo");
+  
   desc.add<double>("maxDiffxi", 1.)->setComment("maximum relative deviation of RP xi from dijet xi");
   desc.add<double>("maxDiffm", 1.)->setComment("maximum relative deviation of RP m from dijet m");
   desc.add<double>("maxDiffy", 1.)->setComment("maximum absolute deviation of RP y from dijet y");
 
-  desc.add<int>("nJets", 2)->setComment("number of jets to be used. Only 2 jets can be used for the xi matching option");
+  desc.add<unsigned int>("nJets", 2)->setComment("number of jets to be used. Only 2 jets can be used for the xi matching option");
 
   desc.add<bool>("do_xi", true)->setComment("toggle to trigger on xi deviation");
   desc.add<bool>("do_my", false)->setComment("toggle to trigger on m,y deviation");
@@ -44,11 +50,13 @@ PPSKinFilter::PPSKinFilter(const edm::ParameterSet& iConfig)
   forwardProtonInputTag_(iConfig.getParameter<edm::InputTag>("forwardProtonInputTag")), 
   recoProtonSingleRPToken_(consumes<std::vector<reco::ForwardProton>>(forwardProtonInputTag_)),
 
+  lhcInfoLabel_(iConfig.getParameter<std::string>("lhcInfoLabel")),
+
   maxDiffxi_(iConfig.getParameter<double>("maxDiffxi")),
   maxDiffm_(iConfig.getParameter<double>("maxDiffm")),
   maxDiffy_(iConfig.getParameter<double>("maxDiffy")),
 
-  n_jets_(iConfig.getParameter<int>("nJets")),
+  n_jets_(iConfig.getParameter<unsigned int>("nJets")),
   
   do_xi_(iConfig.getParameter<bool>("do_xi")),
   do_my_(iConfig.getParameter<bool>("do_my"))
@@ -63,33 +71,32 @@ bool PPSKinFilter::filter(edm::StreamID, edm::Event& iEvent, const edm::EventSet
   float min56 = 1000.;
   float xi45 = 0.;
   float xi56 = 0.;
-  float xi = 0.;
 
-  double mjet = 0.;
-  double m = 0.;
-  double yjet = 0.;
-  double y = 0.;
   bool kin_pass = false; 
-  
-  float sqs = 13000.;
+
+  edm::ESHandle<LHCInfo> hLHCInfo;
+  iSetup.get<LHCInfoRcd>().get(lhcInfoLabel_, hLHCInfo);
+  float sqs = 2.*hLHCInfo->energy();
   
   edm::Handle<reco::PFJetCollection> jets;
   iEvent.getByToken(jet_token_, jets); // get jet collection
 
-  if(jets->size() >= (unsigned int)n_jets_ && do_xi_) {
+  edm::Handle<std::vector<reco::ForwardProton>> recoSingleRPProtons;
+  iEvent.getByToken(recoProtonSingleRPToken_, recoSingleRPProtons); // get RP proton collection
 
-    double sum45 = 0, sum56 = 0;
+  if( jets->size() < n_jets_) return false; // cond for nr jets
+  
+  if(do_xi_) {
+
+    float sum45 = 0, sum56 = 0, xi;
     
-    for(int i = 0; i < n_jets_; i++){
+    for(unsigned int i = 0; i < n_jets_; i++){
       sum45 += (*jets)[i].energy() + (*jets)[i].pz();
       sum56 += (*jets)[i].energy() - (*jets)[i].pz();
     }
 
     xi45 = sum45/sqs; // get arm45 xi for n leading-pT jets
     xi56 = sum56/sqs; // get arm56 xi for n leading-pT jets
-
-    edm::Handle<std::vector<reco::ForwardProton>> recoSingleRPProtons;
-    iEvent.getByToken(recoProtonSingleRPToken_, recoSingleRPProtons); // get RP proton collection
 
     for (const auto & proton : *recoSingleRPProtons) // cycle over proton tracks
       {
@@ -107,18 +114,17 @@ bool PPSKinFilter::filter(edm::StreamID, edm::Event& iEvent, const edm::EventSet
       }
   }
 
-  if(jets->size() >= (unsigned int)n_jets_  && do_my_) {
+  if(do_my_) {
 
+    float m, y;
+  
     // get the mass and rap of the n jets
-    ROOT::Math::LorentzVector<ROOT::Math::PxPyPzE4D<double> > j_sum;
-    for(int i = 0; i < n_jets_; i++)
+    ROOT::Math::LorentzVector<ROOT::Math::PxPyPzE4D<float> > j_sum;
+    for(unsigned int i = 0; i < n_jets_; i++)
       j_sum = j_sum+(*jets)[i].p4();
     
-    mjet = j_sum.M();
-    yjet = j_sum.Rapidity();
-    
-    edm::Handle<std::vector<reco::ForwardProton>> recoSingleRPProtons;
-    iEvent.getByToken(recoProtonSingleRPToken_, recoSingleRPProtons); // get RP proton collection
+    float mjet = j_sum.M();
+    float yjet = j_sum.Rapidity();
 
     for (const auto & proton1 : *recoSingleRPProtons) // cycle over first RP (only arm45)
       {
@@ -149,9 +155,7 @@ bool PPSKinFilter::filter(edm::StreamID, edm::Event& iEvent, const edm::EventSet
 	}
       }
   }
-      
-  if( jets->size() < 2) return false; // cond for nr jets
-  
+
   if( ( min56 / xi56 > maxDiffxi_ || min45 / xi45 > maxDiffxi_ )  && maxDiffxi_ > 0 && do_xi_) return false; // cond for xi matching
 
   if(!kin_pass && do_my_ ) return false; // cond for m,y matching
