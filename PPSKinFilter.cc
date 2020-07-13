@@ -25,11 +25,11 @@ void PPSKinFilter::fillDescriptions(edm::ConfigurationDescriptions& descriptions
 
   desc.add<std::string>("lhcInfoLabel", std::string(""))->setComment("label used for LHCInfo");
   
-  desc.add<double>("maxDiffxi", 1.)->setComment("maximum relative deviation of RP xi from dijet xi");
-  desc.add<double>("maxDiffm", 1.)->setComment("maximum relative deviation of RP m from dijet m");
-  desc.add<double>("maxDiffy", 1.)->setComment("maximum absolute deviation of RP y from dijet y");
+  desc.add<double>("maxDiffxi", 1.)->setComment("maximum relative deviation of RP xi from dijet xi. Used with do_xi option");
+  desc.add<double>("maxDiffm", 1.)->setComment("maximum relative deviation of RP m from dijet m- Used with do_my option");
+  desc.add<double>("maxDiffy", 1.)->setComment("maximum absolute deviation of RP y from dijet y. Used with do_my option");
 
-  desc.add<unsigned int>("nJets", 2)->setComment("number of jets to be used. Only 2 jets can be used for the xi matching option");
+  desc.add<unsigned int>("nJets", 2)->setComment("number of jets to be used");
 
   desc.add<bool>("do_xi", true)->setComment("toggle to trigger on xi deviation");
   desc.add<bool>("do_my", false)->setComment("toggle to trigger on m,y deviation");
@@ -76,7 +76,7 @@ bool PPSKinFilter::filter(edm::StreamID, edm::Event& iEvent, const edm::EventSet
 
   edm::ESHandle<LHCInfo> hLHCInfo;
   iSetup.get<LHCInfoRcd>().get(lhcInfoLabel_, hLHCInfo);
-  float sqs = 2.*hLHCInfo->energy();
+  float sqs = 2.*hLHCInfo->energy(); // get sqrt(s)
   
   edm::Handle<reco::PFJetCollection> jets;
   iEvent.getByToken(jet_token_, jets); // get jet collection
@@ -84,11 +84,11 @@ bool PPSKinFilter::filter(edm::StreamID, edm::Event& iEvent, const edm::EventSet
   edm::Handle<std::vector<reco::ForwardProton>> recoSingleRPProtons;
   iEvent.getByToken(recoProtonSingleRPToken_, recoSingleRPProtons); // get RP proton collection
 
-  if( jets->size() < n_jets_) return false; // cond for nr jets
+  if( jets->size() < n_jets_) return false; // test for nr jets
   
-  if(do_xi_) {
+  if(do_xi_) { // xi matching bloc
 
-    float sum45 = 0, sum56 = 0, xi;
+    float sum45 = 0, sum56 = 0;
     
     for(unsigned int i = 0; i < n_jets_; i++){
       sum45 += (*jets)[i].energy() + (*jets)[i].pz();
@@ -102,7 +102,7 @@ bool PPSKinFilter::filter(edm::StreamID, edm::Event& iEvent, const edm::EventSet
       {
 	if (proton.validFit()) // Check that the track fit is valid
 	  {
-	    xi = proton.xi(); // Get the proton xi
+	    const auto &xi = proton.xi(); // Get the proton xi
 	       
 	    CTPPSDetId rpId((*proton.contributingLocalTracks().begin())->getRPId()); // get RP ID (rpId.arm() is 0 for 45 and 1 for 56)
 
@@ -114,17 +114,15 @@ bool PPSKinFilter::filter(edm::StreamID, edm::Event& iEvent, const edm::EventSet
       }
   }
 
-  if(do_my_) {
-
-    float m, y;
+  if(do_my_) { // m, y matching bloc
   
     // get the mass and rap of the n jets
     ROOT::Math::LorentzVector<ROOT::Math::PxPyPzE4D<float> > j_sum;
     for(unsigned int i = 0; i < n_jets_; i++)
       j_sum = j_sum+(*jets)[i].p4();
     
-    float mjet = j_sum.M();
-    float yjet = j_sum.Rapidity();
+    const auto &mjet = j_sum.M();
+    const auto &yjet = j_sum.Rapidity();
 
     for (const auto & proton1 : *recoSingleRPProtons) // cycle over first RP (only arm45)
       {
@@ -133,17 +131,17 @@ bool PPSKinFilter::filter(edm::StreamID, edm::Event& iEvent, const edm::EventSet
 	if (proton1.validFit()) {	       
 	  CTPPSDetId rpId1((*proton1.contributingLocalTracks().begin())->getRPId()); // get RP ID (rpId.arm() is 0 for 45 and 1 for 56)	    
 	  if(rpId1.arm() == 0) {
-	    xi45 = proton1.xi();
+	    const auto &xi_45 = proton1.xi();
 	      
 	    for (const auto & proton2 : *recoSingleRPProtons) // cycle over second RP (only arm56)
 	      {
 		if (proton2.validFit())  {	       
 		  CTPPSDetId rpId2((*proton2.contributingLocalTracks().begin())->getRPId()); 
 		  if(rpId2.arm() == 1) {
-		    xi56 = proton2.xi();
+		    const auto &xi_56 = proton2.xi();
 		      
-		    m = sqs * sqrt( xi45 * xi56);
-		    y = 0.5 * log( xi45 / xi56);
+		    const auto &m = sqs * sqrt( xi_45 * xi_56);
+		    const auto &y = 0.5 * log( xi_45 / xi_56);
 		    if((abs(m-mjet)/mjet < maxDiffm_ || maxDiffm_ <= 0) && (abs(y-yjet) < maxDiffy_ || maxDiffy_ <= 0)) {
 		      kin_pass = true;
 		      break;
@@ -156,11 +154,11 @@ bool PPSKinFilter::filter(edm::StreamID, edm::Event& iEvent, const edm::EventSet
       }
   }
 
-  if( ( min56 / xi56 > maxDiffxi_ || min45 / xi45 > maxDiffxi_ )  && maxDiffxi_ > 0 && do_xi_) return false; // cond for xi matching
+  if( ( min56 / xi56 > maxDiffxi_ || min45 / xi45 > maxDiffxi_ )  && maxDiffxi_ > 0 && do_xi_) return false; // fail cond for xi matching
 
-  if(!kin_pass && do_my_ ) return false; // cond for m,y matching
+  if(!kin_pass && do_my_ ) return false; // fail cond for m,y matching
   
-  return true; // if none of the conds are met, event has passed the trigger
+  return true; // if none of the fail conds are met, event has passed the trigger
 }
 
 DEFINE_FWK_MODULE(PPSKinFilter);
