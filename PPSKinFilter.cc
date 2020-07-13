@@ -66,14 +66,7 @@ PPSKinFilter::PPSKinFilter(const edm::ParameterSet& iConfig)
 // member functions
 //
 bool PPSKinFilter::filter(edm::StreamID, edm::Event& iEvent, const edm::EventSetup& iSetup) const {
-  
-  float min45 = 1000.;
-  float min56 = 1000.;
-  float xi45 = 0.;
-  float xi56 = 0.;
-
-  bool kin_pass = false; 
-
+ 
   edm::ESHandle<LHCInfo> hLHCInfo;
   iSetup.get<LHCInfoRcd>().get(lhcInfoLabel_, hLHCInfo);
   float sqs = 2.*hLHCInfo->energy(); // get sqrt(s)
@@ -86,18 +79,20 @@ bool PPSKinFilter::filter(edm::StreamID, edm::Event& iEvent, const edm::EventSet
 
   if( jets->size() < n_jets_) return false; // test for nr jets
   
-  if(do_xi_) { // xi matching bloc
+  if(do_xi_ && maxDiffxi_ > 0) { // xi matching bloc
 
     float sum45 = 0, sum56 = 0;
-    
+   
     for(unsigned int i = 0; i < n_jets_; i++){
       sum45 += (*jets)[i].energy() + (*jets)[i].pz();
       sum56 += (*jets)[i].energy() - (*jets)[i].pz();
     }
 
-    xi45 = sum45/sqs; // get arm45 xi for n leading-pT jets
-    xi56 = sum56/sqs; // get arm56 xi for n leading-pT jets
+    const float xi45 = sum45/sqs; // get arm45 xi for n leading-pT jets
+    const float xi56 = sum56/sqs; // get arm56 xi for n leading-pT jets
 
+    float min45 = 1000., min56 = 1000.;
+    
     for (const auto & proton : *recoSingleRPProtons) // cycle over proton tracks
       {
 	if (proton.validFit()) // Check that the track fit is valid
@@ -112,10 +107,12 @@ bool PPSKinFilter::filter(edm::StreamID, edm::Event& iEvent, const edm::EventSet
 	      min56 = abs(xi-xi56);
 	  }
       }
+
+    if( min56 / xi56 > maxDiffxi_ || min45 / xi45 > maxDiffxi_ ) return false; // fail cond for xi matching
   }
 
   if(do_my_) { // m, y matching bloc
-  
+    
     // get the mass and rap of the n jets
     ROOT::Math::LorentzVector<ROOT::Math::PxPyPzE4D<float> > j_sum;
     for(unsigned int i = 0; i < n_jets_; i++)
@@ -126,8 +123,6 @@ bool PPSKinFilter::filter(edm::StreamID, edm::Event& iEvent, const edm::EventSet
 
     for (const auto & proton1 : *recoSingleRPProtons) // cycle over first RP (only arm45)
       {
-	if(kin_pass) break; // leave cycle if a combination that meets cuts is found
-	
 	if (proton1.validFit()) {	       
 	  CTPPSDetId rpId1((*proton1.contributingLocalTracks().begin())->getRPId()); // get RP ID (rpId.arm() is 0 for 45 and 1 for 56)	    
 	  if(rpId1.arm() == 0) {
@@ -139,25 +134,21 @@ bool PPSKinFilter::filter(edm::StreamID, edm::Event& iEvent, const edm::EventSet
 		  CTPPSDetId rpId2((*proton2.contributingLocalTracks().begin())->getRPId()); 
 		  if(rpId2.arm() == 1) {
 		    const auto &xi_56 = proton2.xi();
-		      
+
+		    // m, y matching tests
 		    const auto &m = sqs * sqrt( xi_45 * xi_56);
 		    const auto &y = 0.5 * log( xi_45 / xi_56);
-		    if((abs(m-mjet)/mjet < maxDiffm_ || maxDiffm_ <= 0) && (abs(y-yjet) < maxDiffy_ || maxDiffy_ <= 0)) {
-		      kin_pass = true;
-		      break;
-		    }
+		    if((abs(m-mjet)/mjet < maxDiffm_ || maxDiffm_ <= 0) && (abs(y-yjet) < maxDiffy_ || maxDiffy_ <= 0))
+		      return true; // pass cond, immediately return true
 		  }
 		}
 	      }
 	  }
 	}
       }
+    return false; // fail cond for m,y matching (pass cond never met in cycle)
   }
 
-  if( ( min56 / xi56 > maxDiffxi_ || min45 / xi45 > maxDiffxi_ )  && maxDiffxi_ > 0 && do_xi_) return false; // fail cond for xi matching
-
-  if(!kin_pass && do_my_ ) return false; // fail cond for m,y matching
-  
   return true; // if none of the fail conds are met, event has passed the trigger
 }
 
