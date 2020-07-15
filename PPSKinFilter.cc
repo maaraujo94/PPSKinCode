@@ -1,3 +1,13 @@
+// Author: Mariana Araujo
+// Created: 2019-12-10
+/*
+Description:
+HLT filter module to select events according to matching of central (jets) and PPS (RP tracks) kinematics
+
+Implementation:
+Matching can be done on the xi and/or mass+rapidity variables, using the do_xi and do_my booleans. If both are set to true, both matching conditions must be met
+*/
+
 // include files
 #include "PPSKinFilter.h"
 
@@ -31,8 +41,8 @@ void PPSKinFilter::fillDescriptions(edm::ConfigurationDescriptions& descriptions
 
   desc.add<unsigned int>("nJets", 2)->setComment("number of jets to be used");
 
-  desc.add<bool>("do_xi", true)->setComment("toggle to trigger on xi deviation");
-  desc.add<bool>("do_my", false)->setComment("toggle to trigger on m,y deviation");
+  desc.add<bool>("do_xi", true)->setComment("flag to require xi matching");
+  desc.add<bool>("do_my", false)->setComment("flag to require m,y matching");
 
   descriptions.add("hltCTPPSKinematicFilter", desc);
   return;
